@@ -14,7 +14,7 @@ int main(int argc, char** argv) {
 
   int file;
   if ((file = open(argv[1], O_WRONLY | O_CREAT | O_APPEND, S_IRWXU)) == -1) {
-    perror("open() failed!\n");
+    perror("open() failed ");
     exit(EXIT_FAILURE);
   }
   
