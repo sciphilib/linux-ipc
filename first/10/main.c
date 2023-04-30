@@ -63,6 +63,21 @@ int parse_commands(char** args, char*** cmds) {
   return cmdcnt;
 }
 
+int make_pipes(int* pipes, int cmdcount) {
+  int curpipe = 0;
+  for (int i = 0; i < cmdcount; i++) {
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+      perror("pipe() error ");
+      exit(EXIT_FAILURE);
+    }
+    pipes[curpipe] = pipefd[0];
+    pipes[curpipe + 1] = pipefd[1];
+    curpipe = curpipe + 2;
+  }
+  return 0;
+}
+
 int main() {
   printf("Welcome! Enter the commands to run:\n");
 
@@ -76,56 +91,54 @@ int main() {
   parse(buf, args);
   /* parse all commands by "|". */
   cmdcount = parse_commands(args, commands);
+  int pipefd[2 * cmdcount];
+  make_pipes(pipefd, cmdcount);
 
-  // 0 read, 1 write
-  int pipefd[2];
-  if (pipe(pipefd) == -1) {
-    perror("pipe() error ");
-    exit(EXIT_FAILURE);
-  }
-  
   size_t pid;
   int status;
   for (int curcmd = 0; curcmd < cmdcount; curcmd++) {
     pid = fork();
-
+    
     if (pid == -1) {
       perror("fork() error ");
       exit(EXIT_FAILURE);
     }
     
     if (pid == 0) {
-      if (dup2(pipefd[0], STDIN_FILENO) == -1) {
-	perror("dup2-0() error ");
-	exit(EXIT_FAILURE);
-      }
-      /* last command needs output to stdout, so we do not dup2(). */
-      if (curcmd != (cmdcount - 1)) {
-	if (dup2(pipefd[1], STDOUT_FILENO) == -1) {
-	  perror("dup2-1() error ");
+      int res;
+      /* first command needs input from stdin, so we do not dup2(). */
+      if (curcmd != 0) {
+	if (dup2(pipefd[(curcmd - 1) * 2], STDIN_FILENO) == -1) {
+	  perror("dup2() (pipe input) error ");
 	  exit(EXIT_FAILURE);
 	}
       }
-      close(pipefd[1]);
-      close(pipefd[0]);
-
-      int res;
+      /* last command needs output to stdout, so we do not dup2(). */
+      if (curcmd != (cmdcount - 1)) {
+	if (dup2(pipefd[curcmd * 2 + 1], STDOUT_FILENO) == -1) {
+	  perror("dup2() (pipe output) error ");
+	  exit(EXIT_FAILURE);
+	}
+      }
+      close(pipefd[(curcmd - 1) * 2]);
+      close(pipefd[curcmd * 2 + 1]);
       res = execvp(**(commands + curcmd), commands[curcmd]);
       if (res == -1) {
 	perror("execvp() error ");
 	exit(EXIT_FAILURE);
       }
+      
     } else {
-      // ?
-      close(pipefd[1]);
+      close(pipefd[(curcmd - 1) * 2]);
+      close(pipefd[curcmd * 2 + 1]);
       wait(&status);
       if (status == -1) {
 	perror("wait() error ");
       }
     }
   }
-
-  close(pipefd[1]);
-  close(pipefd[0]);
+  for (int i = 0; i < cmdcount * 2; i++) {
+    close(pipefd[i]);
+  }
   return 0;
 }
